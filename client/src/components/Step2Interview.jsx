@@ -15,6 +15,9 @@ const Step2Interview = ({ interviewData, onFinish }) => {
   const [isMicOn, setIsMicOn] = useState(false)
 
   const recognitionRef = useRef(null)
+  const videoRef = useRef(null)
+
+  const isMicOnRef = useRef(false) // FIX 1
 
   const [isAIPlaying, setIsAIPlaying] = useState(false)
 
@@ -32,57 +35,48 @@ const Step2Interview = ({ interviewData, onFinish }) => {
   const [voiceGender, setVoiceGender] = useState("female")
   const [subtitle, setSubtitle] = useState("")
 
-  const videoRef = useRef(null)
-
   const currentQuestion = questions[currentIndex]
+  const videoSrc = voiceGender === "male" ? maleVideo : femaleVideo
 
-  // =========================
-  // LOAD VOICES
-  // =========================
+  // sync mic ref
+  useEffect(() => {
+    isMicOnRef.current = isMicOn
+  }, [isMicOn])
+
+  // ================= VOICES =================
   useEffect(() => {
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices()
-
       if (!voices.length) return
 
-      const femaleVoice = voices.find(
-        (v) =>
-          v.name.toLowerCase().includes("zira") ||
-          v.name.toLowerCase().includes("samantha") ||
-          v.name.toLowerCase().includes("female")
+      const femaleVoice = voices.find(v =>
+        v.name.toLowerCase().includes("zira") ||
+        v.name.toLowerCase().includes("samantha") ||
+        v.name.toLowerCase().includes("female")
+      )
+
+      const maleVoice = voices.find(v =>
+        v.name.toLowerCase().includes("david") ||
+        v.name.toLowerCase().includes("mark") ||
+        v.name.toLowerCase().includes("male")
       )
 
       if (femaleVoice) {
         setSelectedVoice(femaleVoice)
         setVoiceGender("female")
-        return
-      }
-
-      const maleVoice = voices.find(
-        (v) =>
-          v.name.toLowerCase().includes("david") ||
-          v.name.toLowerCase().includes("mark") ||
-          v.name.toLowerCase().includes("male")
-      )
-
-      if (maleVoice) {
+      } else if (maleVoice) {
         setSelectedVoice(maleVoice)
         setVoiceGender("male")
-        return
+      } else {
+        setSelectedVoice(voices[0])
       }
-
-      setSelectedVoice(voices[0])
     }
 
     loadVoices()
     window.speechSynthesis.onvoiceschanged = loadVoices
   }, [])
 
-  const videoSrc = voiceGender === "male" ? maleVideo : femaleVideo
-
-  // =========================
-  // SPEAK FUNCTION
-  // =========================
+  // ================= SPEAK =================
   const speakTest = (text) => {
     return new Promise((resolve) => {
       if (!window.speechSynthesis || !selectedVoice) {
@@ -104,64 +98,47 @@ const Step2Interview = ({ interviewData, onFinish }) => {
       utterance.volume = 1
 
       utterance.onstart = () => {
-        videoRef.current?.pause()
-        videoRef.current.currentTime = 0
-
         setIsAIPlaying(true)
 
-        stopMic()
+        videoRef.current?.pause()
+        if (videoRef.current) videoRef.current.currentTime = 0
 
+        stopMic()
         videoRef.current?.play()
       }
 
       utterance.onend = () => {
-        videoRef.current?.pause()
-        videoRef.current.currentTime = 0
-
         setIsAIPlaying(false)
 
-        if (isMicOn) {
-          startMic()
-        }
+        videoRef.current?.pause()
+        if (videoRef.current) videoRef.current.currentTime = 0
 
         setTimeout(() => {
           setSubtitle("")
           resolve()
+
+          if (isMicOnRef.current) {
+            startMic()
+          }
         }, 300)
       }
 
       setSubtitle(text)
-
       window.speechSynthesis.speak(utterance)
     })
   }
 
-  // =========================
-  // INTRO + QUESTION SPEAK
-  // =========================
+  // ================= INTRO =================
   useEffect(() => {
     if (!selectedVoice) return
 
     const runIntro = async () => {
       if (isIntroPhase) {
-        await speakTest(
-          `Hi ${userName}, it's great to meet you today. I hope you are feeling confident and ready.`
-        )
-
-        await speakTest(
-          `I'll ask you a few questions. Just answer naturally and take your time. Let's begin.`
-        )
-
+        await speakTest(`Hi ${userName}, it's great to meet you today.`)
+        await speakTest(`Let's begin your interview.`)
         setIsIntroPhase(false)
       } else if (currentQuestion) {
-        await new Promise((r) => setTimeout(r, 800))
-
-        if (currentIndex === questions.length - 1) {
-          await speakTest(
-            "Alright, this one might be a bit more challenging."
-          )
-        }
-
+        await new Promise(r => setTimeout(r, 800))
         await speakTest(currentQuestion.question)
       }
     }
@@ -169,163 +146,107 @@ const Step2Interview = ({ interviewData, onFinish }) => {
     runIntro()
   }, [selectedVoice, isIntroPhase, currentIndex])
 
-  // =========================
-  // TIMER
-  // =========================
+  // ================= TIMER =================
   useEffect(() => {
-    if (isIntroPhase) return
-    if (!currentQuestion) return
+    if (isIntroPhase || !currentQuestion || feedback) return
 
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
+      setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer)
           return 0
         }
-
         return prev - 1
       })
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [isIntroPhase, currentIndex])
+  }, [isIntroPhase, currentIndex, feedback])
 
-  // =========================
-  // SPEECH RECOGNITION
-  // =========================
-  // =========================
-// SPEECH RECOGNITION
-// =========================
-useEffect(() => {
-  if (!("webkitSpeechRecognition" in window)) {
-    console.log("Speech Recognition not supported")
-    return
-  }
+  // ================= SPEECH RECOGNITION =================
+  useEffect(() => {
+    if (!("webkitSpeechRecognition" in window)) return
 
-  const recognition = new window.webkitSpeechRecognition()
+    const recognition = new window.webkitSpeechRecognition()
+    recognition.lang = "en-US"
+    recognition.continuous = true
+    recognition.interimResults = true
 
-  recognition.lang = "en-US"
-  recognition.continuous = true
-  recognition.interimResults = true
+    recognition.onresult = (event) => {
+      let finalTranscript = ""
 
-  recognition.onstart = () => {
-    console.log("Recognition Started")
-  }
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + " "
+        }
+      }
 
-  // =========================
-  // FIXED TRANSCRIPT LOOPING
-  // =========================
-  recognition.onresult = (event) => {
-    let finalTranscript = ""
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript
-
-      // Only final results
-      if (event.results[i].isFinal) {
-        finalTranscript += transcript + " "
+      if (finalTranscript.trim()) {
+        setAnswer(prev => (prev + " " + finalTranscript).trim())
       }
     }
 
-    // Prevent duplicate append
-    if (finalTranscript.trim()) {
-      setAnswer((prev) => {
-        if (prev.endsWith(finalTranscript.trim())) {
-          return prev
-        }
-
-        return (prev + " " + finalTranscript).trim()
-      })
-    }
-  }
-
-  recognition.onerror = (event) => {
-    console.log("Recognition Error:", event.error)
-
-    if (
-      event.error === "aborted" ||
-      event.error === "no-speech"
-    ) {
-      return
+    recognition.onerror = (event) => {
+      if (event.error === "not-allowed") {
+        setIsMicOn(false)
+      }
     }
 
-    if (event.error === "not-allowed") {
-      setIsMicOn(false)
+    recognition.onend = () => {
+      if (isMicOn && !isAIPlaying && recognitionRef.current) {
+        setTimeout(() => {
+          try {
+            recognitionRef.current.start()
+          } catch (e) {}
+        }, 500)
+      }
     }
-  }
 
-  recognition.onend = () => {
-    console.log("Recognition Ended")
+    recognitionRef.current = recognition
 
-    // FIXED AUTO RESTART
-    if (
-      isMicOn &&
-      !isAIPlaying &&
-      recognitionRef.current
-    ) {
-      setTimeout(() => {
-        try {
-          recognition.start()
-        } catch (err) {
-          console.log(err)
-        }
-      }, 500)
-    }
-  }
-
-  recognitionRef.current = recognition
-
-  return () => {
-    recognition.stop()
-  }
-}, [isMicOn, isAIPlaying])
-
-  // =========================
-  // MIC FUNCTIONS
-  // =========================
-  const startMic = () => {
-    if (recognitionRef.current && !isAIPlaying) {
+    return () => {
       try {
-        recognitionRef.current.start()
-      } catch (err) {
-        console.log(err)
-      }
+        recognition.stop()
+        recognition.abort()
+      } catch (e) {}
     }
+  }, [isMicOn, isAIPlaying])
+
+  // ================= MIC =================
+  const startMic = () => {
+    if (!recognitionRef.current || isAIPlaying) return
+    try {
+      recognitionRef.current.start()
+    } catch (e) {}
   }
 
   const stopMic = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-    }
+    try {
+      recognitionRef.current?.stop()
+    } catch (e) {}
   }
 
   const toogleMic = async () => {
     if (isMicOn) {
       stopMic()
       setIsMicOn(false)
-    } else {
-      try {
-        await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        })
+      return
+    }
 
-        startMic()
-        setIsMicOn(true)
-      } catch (error) {
-        console.log("Mic Permission Error:", error)
-        alert("Please allow microphone access")
-      }
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true })
+      setIsMicOn(true)
+      setTimeout(startMic, 300)
+    } catch (error) {
+      alert("Please allow microphone access")
     }
   }
 
-  // =========================
-  // SUBMIT ANSWER
-  // =========================
+  // ================= SUBMIT =================
   const submitAns = async () => {
     if (issubmitting) return
 
     stopMic()
-
     setIsSubmitting(true)
 
     try {
@@ -335,53 +256,44 @@ useEffect(() => {
           interviewId,
           questionIndex: currentIndex,
           answer,
-          timeTaken:
-            currentQuestion.timeLimit - timeLeft,
+          timeTaken: currentQuestion.timeLimit - timeLeft,
         },
         { withCredentials: true }
       )
 
       setFeedback(result.data.feedback)
+      await speakTest(result.data.feedback)
 
-      speakTest(result.data.feedback)
-
-      setIsSubmitting(false)
     } catch (error) {
       console.log(error)
-      setIsSubmitting(false)
     }
+
+    setIsSubmitting(false)
   }
 
-  // =========================
-  // NEXT QUESTION
-  // =========================
+  // ================= NEXT =================
   const handleNext = async () => {
     setAnswer("")
     setFeedback("")
 
-    if (currentIndex + 1 >= questions.length) {
+    const nextIndex = currentIndex + 1
+
+    if (nextIndex >= questions.length) {
       finishInterview()
       return
     }
 
-    await speakTest(
-      "Alright, let's move to the next question."
-    )
+    await speakTest("Let's move to the next question.")
 
-    setCurrentIndex(currentIndex + 1)
-
-    setTimeLeft(
-      questions[currentIndex + 1]?.timeLimit || 60
-    )
+    setCurrentIndex(nextIndex)
+    setTimeLeft(questions[nextIndex]?.timeLimit || 60)
 
     setTimeout(() => {
-      if (isMicOn) startMic()
+      if (isMicOnRef.current) startMic()
     }, 500)
   }
 
-  // =========================
-  // FINISH INTERVIEW
-  // =========================
+  // ================= FINISH =================
   const finishInterview = async () => {
     stopMic()
     setIsMicOn(false)
@@ -389,229 +301,120 @@ useEffect(() => {
     try {
       const result = await axios.post(
         ServerUrl + "/api/interview/finish",
-        {
-          interviewId,
-        },
+        { interviewId },
         { withCredentials: true }
       )
 
-      console.log(result.data)
-
-      if (onFinish) {
-        onFinish(result.data)
-      }
+      onFinish?.(result.data)
     } catch (error) {
       console.log(error)
     }
   }
 
-  // =========================
-  // AUTO SUBMIT
-  // =========================
+  // ================= AUTO SUBMIT =================
   useEffect(() => {
-    if (
-      isIntroPhase ||
-      !currentQuestion
-    )
-      return
+    if (isIntroPhase || !currentQuestion || feedback) return
 
-    if (
-      timeLeft === 0 &&
-      !issubmitting &&
-      !feedback
-    ) {
+    if (timeLeft === 0 && !issubmitting) {
       submitAns()
     }
-  }, [timeLeft])
+  }, [timeLeft, feedback, isIntroPhase, currentQuestion, issubmitting])
 
-  // =========================
-  // CLEANUP
-  // =========================
+  // ================= CLEANUP =================
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-        recognitionRef.current.abort()
-      }
+      try {
+        recognitionRef.current?.stop()
+        recognitionRef.current?.abort()
+      } catch (e) {}
 
       window.speechSynthesis.cancel()
     }
   }, [])
 
   return (
-    <div
-      className='min-h-screen bg-linear-to-br from-emerald-50 via-white
-    to-teal-100 flex items-center justify-center p-4 sm:p-6'
-    >
-      <div
-        className='w-full max-w-350 min-h-[80vh] bg-white rounded-3xl
-      shadow-2xl border border-gray-200 flex flex-col lg:flex-row
-      overflow-hidden'
-      >
-        {/* VIDEO SECTION */}
-        <div
-          className='w-full lg:w-[35%] bg-white flex flex-col items-center p-6
-space-y-6 border-r border-gray-200'
-        >
+    <div className='min-h-screen bg-linear-to-br from-emerald-50 via-white to-teal-100 flex items-center justify-center p-4 sm:p-6'>
+      <div className='w-full max-w-350 min-h-[80vh] bg-white rounded-3xl shadow-2xl border border-gray-200 flex flex-col lg:flex-row overflow-hidden'>
+
+        <div className='w-full lg:w-[35%] bg-white flex flex-col items-center p-6 space-y-6 border-r border-gray-200'>
           <div className='w-full max-w-md rounded-2xl overflow-hidden shadow-xl'>
             <video
               muted
               playsInline
               preload='auto'
               src={videoSrc}
-              key={videoSrc}
               ref={videoRef}
               className='w-full h-auto object-cover'
             />
           </div>
 
-          {/* SUBTITLE */}
           {subtitle && (
-            <div
-              className='w-full max-w-md bg-gray-50 border border-gray-200 rounded-xl
-  p-4 shadow-sm'
-            >
-              <p
-                className='text-gray-700 text-sm sm:text-base font-medium
-    text-center leading-relaxed'
-              >
+            <div className='w-full max-w-md bg-gray-50 border border-gray-200 rounded-xl p-4 shadow-sm'>
+              <p className='text-gray-700 text-sm sm:text-base font-medium text-center'>
                 {subtitle}
               </p>
             </div>
           )}
 
-          <div
-            className='w-full max-w-md bg-white border border-gray-200 rounded-2xl
-   shadow-md p-6 space-y-5'
-          >
+          <div className='w-full max-w-md bg-white border border-gray-200 rounded-2xl shadow-md p-6 space-y-5'>
             <div className='flex justify-between items-center'>
-              <span className='text-sm text-gray-500'>
-                Interview Status
-              </span>
-
-              {isAIPlaying && (
-                <span className='text-sm font-semibold text-emerald-600'>
-                  AI Speaking
-                </span>
-              )}
+              <span className='text-sm text-gray-500'>Interview Status</span>
+              {isAIPlaying && <span className='text-sm font-semibold text-emerald-600'>AI Speaking</span>}
             </div>
 
-            <div className='h-px bg-gray-300'></div>
+            <Timer timeLeft={timeLeft} totalTime={currentQuestion?.timeLimit} />
 
-            <div className='flex justify-center'>
-              <Timer
-                timeLeft={timeLeft}
-                totalTime={currentQuestion?.timeLimit}
-              />
-            </div>
-
-            <div className='h-px bg-gray-300'></div>
-
-            <div className='grid grid-cols-2 gap-6 text-center'>
+            <div className='grid grid-cols-2 text-center'>
               <div>
-                <span className='text-2xl font-bold text-emerald-600'>
-                  {currentIndex + 1}
-                </span>
-
-                <div className='text-xs text-gray-600'>
-                  Current Question
-                </div>
+                <div className='text-2xl font-bold text-emerald-600'>{currentIndex + 1}</div>
+                <div className='text-xs'>Current</div>
               </div>
-
               <div>
-                <span className='text-2xl font-bold text-emerald-600'>
-                  {questions.length}
-                </span>
-
-                <div className='text-xs text-gray-600'>
-                  Total Questions
-                </div>
+                <div className='text-2xl font-bold text-emerald-600'>{questions.length}</div>
+                <div className='text-xs'>Total</div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* TEXT SECTION */}
-        <div className='flex-1 flex flex-col p-4 sm:p-6 md:p-8 relative'>
-          <h2 className='text-xl sm:text-2xl font-bold text-emerald-600 mb-6'>
-            AI Smart Interview
-          </h2>
+        <div className='flex-1 flex flex-col p-6'>
+          <h2 className='text-xl font-bold text-emerald-600 mb-6'>AI Smart Interview</h2>
 
           {!isIntroPhase && (
-            <div
-              className='relative mb-6 bg-gray-50 p-4 sm:p-6 rounded-2xl border
-border-gray-200 shadow-sm'
-            >
-              <p className='text-xs sm:text-sm text-gray-600 mb-2'>
-                Question {currentIndex + 1} of {questions.length}
-              </p>
-
-              <div className='text-base sm:text-lg font-semibold text-gray-800 leading-relaxed pr-16'>
-                {currentQuestion?.question}
-              </div>
+            <div className='mb-4 bg-gray-50 p-4 rounded-xl border'>
+              {currentQuestion?.question}
             </div>
           )}
 
           <textarea
-            onChange={(e) => setAnswer(e.target.value)}
             value={answer}
-            placeholder='Speak or type your answer here...'
-            className='flex-1 bg-gray-100 p-4 sm:p-6 rounded-2xl resize-none outline-none
-border border-gray-200 focus:ring-2 focus:ring-emerald-500 transition text-gray-800'
+            onChange={(e) => setAnswer(e.target.value)}
+            className='flex-1 bg-gray-100 p-4 rounded-xl outline-none'
+            placeholder='Speak or type your answer'
           />
 
           {!feedback ? (
-            <div className='flex items-center gap-4 mt-6'>
-              <motion.button
-                onClick={toogleMic}
-                whileTap={{ scale: 0.9 }}
-                className='w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center
-rounded-full bg-black text-white shadow-lg'
-              >
-                {isMicOn ? (
-                  <FaMicrophone size={20} />
-                ) : (
-                  <FaMicrophoneSlash size={20} />
-                )}
-              </motion.button>
-
-              <motion.button
-                onClick={submitAns}
-                disabled={issubmitting}
-                whileTap={{ scale: 0.95 }}
-                className='flex-1 bg-linear-to-br from-emerald-600 to-teal-500
-text-white py-3 sm:py-4 rounded-2xl shadow-lg hover:opacity-90 transition font-semibold disabled:bg-gray-500'
-              >
-                {issubmitting
-                  ? "Submitting..."
-                  : "Submit Answer"}
-              </motion.button>
-            </div>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className='mt-6 bg-emerald-50 border border-emerald-200
-            p-5 rounded-2xl shadow-sm'
-            >
-              <p className='text-emerald-700 font-medium mb-4'>
-                {feedback}
-              </p>
+            <div className='flex gap-4 mt-4'>
+              <button onClick={toogleMic} className='bg-black text-white px-4 py-2 rounded-full'>
+                {isMicOn ? <FaMicrophone /> : <FaMicrophoneSlash />}
+              </button>
 
               <button
-                onClick={handleNext}
-                className='w-full bg-linear-to-br from-emerald-600 to-teal-500
-text-white py-3 rounded-xl shadow-md hover:opacity-90 transition flex items-center justify-center
-gap-1'
+                onClick={submitAns}
+                disabled={issubmitting}
+                className='flex-1 bg-emerald-600 text-white rounded-xl'
               >
-                Next Question
-
-                <BsArrowLeft
-                  size={18}
-                  className='rotate-180'
-                />
+                {issubmitting ? "Submitting..." : "Submit"}
               </button>
-            </motion.div>
+            </div>
+          ) : (
+            <div className='mt-4 p-4 bg-emerald-50 border rounded-xl'>
+              <p>{feedback}</p>
+
+              <button onClick={handleNext} className='mt-3 bg-emerald-600 text-white w-full py-2 rounded-xl'>
+                Next Question
+              </button>
+            </div>
           )}
         </div>
       </div>
