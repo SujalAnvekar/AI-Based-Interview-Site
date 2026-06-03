@@ -17,14 +17,16 @@ const Step2Interview = ({ interviewData, onFinish }) => {
   const recognitionRef = useRef(null)
   const videoRef = useRef(null)
 
-  const isMicOnRef = useRef(false) // FIX 1
+  const isMicOnRef = useRef(false)
 
   const [isAIPlaying, setIsAIPlaying] = useState(false)
 
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [answer, setAnswer] = useState("")
-  const [feedback, setFeedback] = useState("")
 
+  const [answer, setAnswer] = useState("")
+  const [interimText, setInterimText] = useState("")   // ✅ NEW
+
+  const [feedback, setFeedback] = useState("")
   const [timeLeft, setTimeLeft] = useState(
     questions[0]?.timeLimit || 60
   )
@@ -38,7 +40,6 @@ const Step2Interview = ({ interviewData, onFinish }) => {
   const currentQuestion = questions[currentIndex]
   const videoSrc = voiceGender === "male" ? maleVideo : femaleVideo
 
-  // sync mic ref
   useEffect(() => {
     isMicOnRef.current = isMicOn
   }, [isMicOn])
@@ -86,11 +87,7 @@ const Step2Interview = ({ interviewData, onFinish }) => {
 
       window.speechSynthesis.cancel()
 
-      const humanTxt = text
-        .replace(/,/g, ", ...")
-        .replace(/\./g, ". ...")
-
-      const utterance = new SpeechSynthesisUtterance(humanTxt)
+      const utterance = new SpeechSynthesisUtterance(text)
 
       utterance.voice = selectedVoice
       utterance.rate = 0.92
@@ -99,10 +96,8 @@ const Step2Interview = ({ interviewData, onFinish }) => {
 
       utterance.onstart = () => {
         setIsAIPlaying(true)
-
         videoRef.current?.pause()
         if (videoRef.current) videoRef.current.currentTime = 0
-
         stopMic()
         videoRef.current?.play()
       }
@@ -134,8 +129,8 @@ const Step2Interview = ({ interviewData, onFinish }) => {
 
     const runIntro = async () => {
       if (isIntroPhase) {
-        await speakTest(`Hi ${userName}, it's great to meet you today.`)
-        await speakTest(`Let's begin your interview.`)
+        await speakTest(`Hi ${userName}, welcome to your interview.`)
+        await speakTest(`Let's begin.`)
         setIsIntroPhase(false)
       } else if (currentQuestion) {
         await new Promise(r => setTimeout(r, 800))
@@ -163,27 +158,37 @@ const Step2Interview = ({ interviewData, onFinish }) => {
     return () => clearInterval(timer)
   }, [isIntroPhase, currentIndex, feedback])
 
-  // ================= SPEECH RECOGNITION =================
+  // ================= SPEECH RECOGNITION (FIXED LIVE TEXT) =================
   useEffect(() => {
     if (!("webkitSpeechRecognition" in window)) return
 
     const recognition = new window.webkitSpeechRecognition()
+
     recognition.lang = "en-US"
     recognition.continuous = true
     recognition.interimResults = true
 
     recognition.onresult = (event) => {
       let finalTranscript = ""
+      let interimTranscript = ""
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript
+
         if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript + " "
+          finalTranscript += transcript + " "
+        } else {
+          interimTranscript += transcript
         }
       }
 
+      // FINAL → stored permanently
       if (finalTranscript.trim()) {
         setAnswer(prev => (prev + " " + finalTranscript).trim())
       }
+
+      // INTERIM → live typing effect
+      setInterimText(interimTranscript)
     }
 
     recognition.onerror = (event) => {
@@ -237,7 +242,7 @@ const Step2Interview = ({ interviewData, onFinish }) => {
       await navigator.mediaDevices.getUserMedia({ audio: true })
       setIsMicOn(true)
       setTimeout(startMic, 300)
-    } catch (error) {
+    } catch {
       alert("Please allow microphone access")
     }
   }
@@ -274,6 +279,7 @@ const Step2Interview = ({ interviewData, onFinish }) => {
   // ================= NEXT =================
   const handleNext = async () => {
     setAnswer("")
+    setInterimText("")
     setFeedback("")
 
     const nextIndex = currentIndex + 1
@@ -283,7 +289,7 @@ const Step2Interview = ({ interviewData, onFinish }) => {
       return
     }
 
-    await speakTest("Let's move to the next question.")
+    await speakTest("Next question.")
 
     setCurrentIndex(nextIndex)
     setTimeLeft(questions[nextIndex]?.timeLimit || 60)
@@ -326,7 +332,7 @@ const Step2Interview = ({ interviewData, onFinish }) => {
       try {
         recognitionRef.current?.stop()
         recognitionRef.current?.abort()
-      } catch (e) {}
+      } catch {}
 
       window.speechSynthesis.cancel()
     }
@@ -337,86 +343,45 @@ const Step2Interview = ({ interviewData, onFinish }) => {
       <div className='w-full max-w-350 min-h-[80vh] bg-white rounded-3xl shadow-2xl border border-gray-200 flex flex-col lg:flex-row overflow-hidden'>
 
         <div className='w-full lg:w-[35%] bg-white flex flex-col items-center p-6 space-y-6 border-r border-gray-200'>
-          <div className='w-full max-w-md rounded-2xl overflow-hidden shadow-xl'>
-            <video
-              muted
-              playsInline
-              preload='auto'
-              src={videoSrc}
-              ref={videoRef}
-              className='w-full h-auto object-cover'
-            />
-          </div>
+          <video ref={videoRef} src={videoSrc} muted playsInline className='w-full rounded-xl' />
 
           {subtitle && (
-            <div className='w-full max-w-md bg-gray-50 border border-gray-200 rounded-xl p-4 shadow-sm'>
-              <p className='text-gray-700 text-sm sm:text-base font-medium text-center'>
-                {subtitle}
-              </p>
+            <div className='p-3 bg-gray-50 rounded-lg text-center text-sm'>
+              {subtitle}
             </div>
           )}
 
-          <div className='w-full max-w-md bg-white border border-gray-200 rounded-2xl shadow-md p-6 space-y-5'>
-            <div className='flex justify-between items-center'>
-              <span className='text-sm text-gray-500'>Interview Status</span>
-              {isAIPlaying && <span className='text-sm font-semibold text-emerald-600'>AI Speaking</span>}
-            </div>
-
-            <Timer timeLeft={timeLeft} totalTime={currentQuestion?.timeLimit} />
-
-            <div className='grid grid-cols-2 text-center'>
-              <div>
-                <div className='text-2xl font-bold text-emerald-600'>{currentIndex + 1}</div>
-                <div className='text-xs'>Current</div>
-              </div>
-              <div>
-                <div className='text-2xl font-bold text-emerald-600'>{questions.length}</div>
-                <div className='text-xs'>Total</div>
-              </div>
-            </div>
-          </div>
+          <Timer timeLeft={timeLeft} totalTime={currentQuestion?.timeLimit} />
         </div>
 
         <div className='flex-1 flex flex-col p-6'>
-          <h2 className='text-xl font-bold text-emerald-600 mb-6'>AI Smart Interview</h2>
-
-          {!isIntroPhase && (
-            <div className='mb-4 bg-gray-50 p-4 rounded-xl border'>
-              {currentQuestion?.question}
-            </div>
-          )}
-
           <textarea
-            value={answer}
+            value={interimText ? `${answer} ${interimText}` : answer}
             onChange={(e) => setAnswer(e.target.value)}
             className='flex-1 bg-gray-100 p-4 rounded-xl outline-none'
-            placeholder='Speak or type your answer'
+            placeholder='Speak or type...'
           />
 
           {!feedback ? (
-            <div className='flex gap-4 mt-4'>
+            <div className='flex gap-3 mt-4'>
               <button onClick={toogleMic} className='bg-black text-white px-4 py-2 rounded-full'>
                 {isMicOn ? <FaMicrophone /> : <FaMicrophoneSlash />}
               </button>
 
-              <button
-                onClick={submitAns}
-                disabled={issubmitting}
-                className='flex-1 bg-emerald-600 text-white rounded-xl'
-              >
-                {issubmitting ? "Submitting..." : "Submit"}
+              <button onClick={submitAns} className='flex-1 bg-emerald-600 text-white rounded-xl'>
+                Submit
               </button>
             </div>
           ) : (
-            <div className='mt-4 p-4 bg-emerald-50 border rounded-xl'>
+            <div className='mt-4 p-4 bg-emerald-50 rounded-xl'>
               <p>{feedback}</p>
-
-              <button onClick={handleNext} className='mt-3 bg-emerald-600 text-white w-full py-2 rounded-xl'>
-                Next Question
+              <button onClick={handleNext} className='w-full mt-2 bg-emerald-600 text-white py-2 rounded-xl'>
+                Next
               </button>
             </div>
           )}
         </div>
+
       </div>
     </div>
   )
